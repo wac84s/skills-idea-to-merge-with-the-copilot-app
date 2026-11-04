@@ -1,70 +1,248 @@
----
-// Bookmarks component (scaffold).
-//
-// The markup below renders during the static build. The dynamic behavior —
-// adding a bookmark, generating a short slug, and persisting to the browser —
-// must run ONLY in the client-side <script> boundary at the bottom of this
-// file. Astro runs that script in the browser, never during the build, so
-// browser-only APIs are safe there.
-//
-// You will implement the behavior in Step 3.
----
-<form id="add-bookmark">
-  <div class="field">
-    <label for="url">Link to save</label>
-    <input
-      id="url"
-      name="url"
-      type="text"
-      inputmode="url"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="https://example.com"
-      required
-    />
+<section class="bookmark-manager" aria-labelledby="manager-title">
+  <div class="intro">
+    <p class="eyebrow">YOUR PERSONAL LINK LIBRARY</p>
+    <h2 id="manager-title">Save a little for later.</h2>
+    <p class="description">Turn any web address into a tidy, memorable Mona link.</p>
   </div>
-  <button type="submit">Add bookmark</button>
-</form>
 
-<p class="hint">Paste a URL and select <strong>Add bookmark</strong> to generate its short <code>mona-</code> slug.</p>
+  <form id="add-bookmark" novalidate>
+    <div class="field">
+      <label for="url">Website address</label>
+      <input
+        id="url"
+        name="url"
+        type="text"
+        inputmode="url"
+        autocomplete="url"
+        spellcheck="false"
+        placeholder="example.com/article"
+        aria-describedby="url-hint"
+      />
+    </div>
+    <button type="submit">Add bookmark <span aria-hidden="true">↗</span></button>
+  </form>
 
-<p id="empty-state" class="empty">No bookmarks yet — add your first link above.</p>
+  <p id="url-hint" class="hint">A missing <code>https://</code> is added for you.</p>
+  <p id="bookmark-status" class="status" role="status" aria-live="polite"></p>
 
-<div id="list-header" hidden>
-  <h2 class="list-title">Saved bookmarks</h2>
-  <button id="clear-all" type="button" class="clear">Clear all</button>
-</div>
+  <p id="empty-state" class="empty">
+    <span class="empty-icon" aria-hidden="true">✳</span>
+    <strong>Your collection starts here</strong>
+    <span>Save a link above and its Mona slug will appear here.</span>
+  </p>
 
-<ul id="bookmark-list" aria-label="Saved bookmarks" aria-live="polite">
-  <!-- Bookmarks render here in the browser. -->
-</ul>
+  <div id="list-header" class="list-header" hidden>
+    <div>
+      <p class="eyebrow">BOOKMARKS</p>
+      <h3 class="list-title">Your saved links</h3>
+    </div>
+    <button id="clear-all" type="button" class="clear">Clear all</button>
+  </div>
+
+  <ul id="bookmark-list" class="bookmark-list" aria-label="Saved bookmarks" aria-live="polite"></ul>
+</section>
 
 <script>
-  // CLIENT-SIDE BOUNDARY — runs in the browser only.
-  //
-  // TODO (Step 3): implement the bookmarks feature here.
-  //   1. On form submit, call event.preventDefault() FIRST so the page
-  //      never reloads, then read and validate the original URL.
-  //   2. Generate a short slug with a "mona-" prefix (for example, base62
-  //      of a counter or hash → "mona-7fk2").
-  //   3. Save the original URL and its slug, then persist them in the browser.
-  //   4. Render each saved bookmark into #bookmark-list as a row (li.bookmark) with:
-  //        - the original URL as a link (.url) that opens in a new tab,
-  //        - its short slug shown as a badge (.slug), and
-  //        - a "Copy" button (.copy) that copies the slug.
-  //   5. Toggle empty vs. saved state: hide #empty-state and show #list-header
-  //      (the "Saved bookmarks" heading + "Clear all" button) once at least one
-  //      bookmark exists; reverse it when the list is empty.
-  //   6. Wire the #clear-all button to remove every saved bookmark (clear the
-  //      list, clear browser storage) after a quick confirm.
-  //   7. On page load, read the saved bookmarks from storage and render
-  //      them so the list persists across reloads.
-  //
-  // Because this code lives in a client <script>, browser storage APIs are
-  // safe to use here without breaking the static build.
+  import { formatBookmark, loadBookmarks, normalizeUrl } from '../lib/bookmarks.js';
+
+  const STORAGE_KEY = 'mona-bookmarks';
   const form = document.getElementById('add-bookmark');
+  const input = document.getElementById('url');
+  const list = document.getElementById('bookmark-list');
+  const emptyState = document.getElementById('empty-state');
+  const listHeader = document.getElementById('list-header');
+  const status = document.getElementById('bookmark-status');
+
+  function readBookmarks() {
+    try {
+      return loadBookmarks(window.localStorage.getItem(STORAGE_KEY));
+    } catch {
+      return [];
+    }
+  }
+
+  let bookmarks = readBookmarks();
+
+  function saveBookmarks() {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bookmarks));
+      return true;
+    } catch {
+      status.textContent = 'Could not save your bookmarks in this browser.';
+      return false;
+    }
+  }
+
+  function renderBookmarks() {
+    list.replaceChildren();
+    const hasBookmarks = bookmarks.length > 0;
+    emptyState.hidden = hasBookmarks;
+    listHeader.hidden = !hasBookmarks;
+
+    for (const bookmark of bookmarks) {
+      const item = document.createElement('li');
+      item.className = 'bookmark';
+
+      const link = document.createElement('a');
+      link.className = 'url';
+      link.href = bookmark.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = bookmark.url;
+
+      const separator = document.createElement('span');
+      separator.className = 'separator';
+      separator.textContent = ' :: ';
+
+      const slug = document.createElement('span');
+      slug.className = 'slug';
+      slug.textContent = bookmark.slug;
+
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'copy';
+      copy.textContent = 'Copy slug';
+      copy.setAttribute('aria-label', `Copy ${bookmark.slug}`);
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(bookmark.slug);
+          status.textContent = `${bookmark.slug} copied.`;
+        } catch {
+          status.textContent = 'Could not copy the slug from this browser.';
+        }
+      });
+
+      item.append(link, separator, slug, copy);
+      list.append(item);
+    }
+  }
+
   form?.addEventListener('submit', (event) => {
-    event.preventDefault(); // keep this — stops the page from reloading
-    // Implement in Step 3.
+    event.preventDefault();
+    try {
+      status.textContent = '';
+      const url = normalizeUrl(input.value);
+      if (!url) {
+        status.textContent = 'Enter a valid http or https web address.';
+        input.focus();
+        return;
+      }
+
+      let slug;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        const bytes = crypto.getRandomValues(new Uint8Array(4));
+        const alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const candidate = `mona-${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')}`;
+        if (!bookmarks.some((bookmark) => bookmark.slug === candidate)) {
+          slug = candidate;
+          break;
+        }
+      }
+
+      if (!slug) {
+        status.textContent = 'Could not create a unique slug. Please try again.';
+        return;
+      }
+
+      bookmarks = [...bookmarks, { url, slug }];
+      if (!saveBookmarks()) {
+        bookmarks = bookmarks.slice(0, -1);
+        return;
+      }
+
+      input.value = '';
+      status.textContent = `Saved ${formatBookmark({ url, slug })}.`;
+      renderBookmarks();
+    } catch {
+      status.textContent = 'Could not add that bookmark. Please try again.';
+    }
   });
+
+  document.getElementById('clear-all')?.addEventListener('click', () => {
+    if (!window.confirm('Clear all saved bookmarks?')) return;
+    bookmarks = [];
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+      status.textContent = 'All bookmarks cleared.';
+    } catch {
+      status.textContent = 'Bookmarks were cleared for this page, but browser storage could not be updated.';
+    }
+    renderBookmarks();
+  });
+
+  renderBookmarks();
 </script>
+
+<style>
+  .bookmark-manager {
+    --card: color-mix(in srgb, currentColor 3%, transparent);
+    --soft-accent: color-mix(in srgb, var(--accent) 12%, transparent);
+    padding: clamp(1.25rem, 5vw, 2rem);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    background:
+      radial-gradient(ellipse at 100% 0%, var(--soft-accent), transparent 42%),
+      var(--card);
+    box-shadow: 0 1.25rem 3rem color-mix(in srgb, currentColor 6%, transparent);
+  }
+
+  .bookmark-manager [hidden] { display: none !important; }
+  .intro { margin-bottom: 1.5rem; }
+  .eyebrow {
+    margin: 0 0 0.4rem;
+    color: var(--accent);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  .intro h2 {
+    margin: 0;
+    font-family: var(--font-head);
+    font-size: clamp(1.4rem, 5vw, 1.9rem);
+    letter-spacing: -0.035em;
+  }
+  .description { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.9rem; }
+  form { margin-top: 1.25rem; }
+  input { min-width: 0; transition: border-color 140ms ease, box-shadow 140ms ease; }
+  input:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  form button { white-space: nowrap; }
+  form button span { margin-left: 0.3rem; }
+  .hint { margin-bottom: 0.5rem; }
+  .hint code { color: inherit; }
+  .status { min-height: 1.35em; margin: 0 0 0.8rem; color: var(--muted); font-size: 0.78rem; }
+  .empty {
+    display: grid;
+    justify-items: center;
+    gap: 0.45rem;
+    padding: 2rem 1rem;
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
+  }
+  .empty-icon { color: var(--accent); font-size: 1.6rem; }
+  .empty strong { color: inherit; font-family: var(--font-head); font-size: 0.95rem; }
+  .empty span:last-child { color: var(--muted); font-size: 0.8rem; }
+  .list-header { margin: 1.3rem 0 0.7rem; }
+  .list-title { font-size: 1.05rem; }
+  .bookmark-list { gap: 0.65rem; }
+  li.bookmark {
+    gap: 0.35rem;
+    padding: 0.8rem 0.9rem;
+    background: color-mix(in srgb, currentColor 2%, transparent);
+  }
+  .bookmark .url { min-width: 0; color: inherit; text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: 0.2em; }
+  .bookmark .url:hover { color: var(--accent); }
+  .separator { white-space: pre; color: var(--muted); }
+  .bookmark .slug { flex: 0 0 auto; font-family: var(--font-body); }
+  .bookmark .copy { flex: 0 0 auto; margin-left: auto; }
+  .bookmark .copy:hover { border-color: var(--accent); color: var(--accent); }
+  .clear { color: var(--muted); }
+
+  @media (max-width: 28rem) {
+    .bookmark-manager { padding: 1.1rem; }
+    .bookmark .url { flex-basis: calc(100% - 1rem); }
+    .bookmark .copy { margin-left: 0; }
+  }
+</style>
